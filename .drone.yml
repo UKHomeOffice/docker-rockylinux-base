@@ -19,15 +19,21 @@ steps:
     - push
     - tag
 
-- name: scan
-  pull: if-not-exists
-  image: 340268328991.dkr.ecr.eu-west-2.amazonaws.com/acp/anchore-submission
-  settings:
-    image_name: rockylinux-base:${DRONE_COMMIT_SHA}
-    whitelist: CVE-2019-5827
+- name: scan-image
+  pull: always
+  image: 340268328991.dkr.ecr.eu-west-2.amazonaws.com/acp/trivy/client:latest
+  resources:
+    limits:
+      cpu: 1000
+      memory: 1024Mi
+  environment:
+    IMAGE_NAME: quay.io/ukhomeofficedigital/docker-rockylinux-base:${DRONE_COMMIT_SHA}
+    IGNORE_UNFIXED: "true"
   when:
     event:
+    - pull_request
     - push
+    - tag
 
 - name: image_to_quay
   pull: if-not-exists
