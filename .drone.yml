@@ -7,20 +7,88 @@ platform:
   os: linux
   arch: amd64
 
+resources:
+  requests:
+    cpu: 1000
+    memory: 1024Mi
+
+environment:
+  OCI_REGISTRY: quay.io
+  OCI_IMAGE_REPO: ukhomeofficedigital/rockylinux-base
+  OCI_REPO_USERNAME: ukhomeofficedigital+drone
+
 steps:
-- name: build_docker_image
-  pull: if-not-exists
-  image: 340268328991.dkr.ecr.eu-west-2.amazonaws.com/acp/dind
+- name: Increment Build Version
+  pull: Always
+  image: 340268328991.dkr.ecr.eu-west-2.amazonaws.com/acp/acp-ci-tools
+  resources:
+    limits:
+      cpu: 100
+      memory: 256Mi
   commands:
-  - /usr/local/bin/wait
-  - docker build -t rockylinux-base:$${DRONE_COMMIT_SHA} .
+  - git config --global --add safe.directory '*'
+  - ls -lrt
+  - git status
+  - echo "# current version - $(cat .semver)"
+  - awk -F. '/[0-9]+\./{$NF++;print}' OFS=. ORS= .semver | tee .semver-new >/dev/null
+  - rm -f .semver
+  - mv .semver-new .semver
+  - echo "# new build - $(cat .semver)"
+  - git commit -am"[CI SKIP] - Increment build version"
   when:
     event:
-    - push
-    - tag
+      include:
+      - push
+      - pull_request
+      exclude:
+      - promote
+
+- name: build
+  pull: Always
+  image: 340268328991.dkr.ecr.eu-west-2.amazonaws.com/acp/dind
+  resources:
+    limits:
+      cpu: 1000
+      memory: 1024Mi
+  commands:
+  # wait for docker service to be up before running docker build
+  - /usr/local/bin/wait
+  - docker build --build-arg ROCKYLINUX_VERSION=$$(cat .semver | cut -d "-" -f -1) -t "$${OCI_REGISTRY}/$${OCI_IMAGE_REPO}:$$(cat .semver)" . --no-cache
+  - docker tag "$${OCI_REGISTRY}/$${OCI_IMAGE_REPO}:$$(cat .semver)" "$${OCI_REGISTRY}/$${OCI_IMAGE_REPO}:${DRONE_COMMIT_SHA}"
+  when:
+    event:
+      include:
+      - push
+      - pull_request
+      exclude:
+      - promote
+
+- name: Promote tag to image version and latest (Quay)
+  pull: Always
+  image: 340268328991.dkr.ecr.eu-west-2.amazonaws.com/acp/dind
+  resources:
+    limits:
+      cpu: 100
+      memory: 256Mi
+  commands:
+  # wait for docker service to be up before running docker build
+  - /usr/local/bin/wait
+  - docker login -u="$${OCI_REPO_USERNAME}" -p=$${OCI_REPO_TOKEN} $${OCI_REGISTRY}
+  - docker pull $${OCI_REGISTRY}/$${OCI_IMAGE_REPO}:$$(cat .semver)
+  - docker tag $${OCI_REGISTRY}/$${OCI_IMAGE_REPO}:$$(cat .semver) $${OCI_REGISTRY}/$${OCI_IMAGE_REPO}:$$(cat .semver | cut -d "-" -f -1)
+  - docker tag $${OCI_REGISTRY}/$${OCI_IMAGE_REPO}:$$(cat .semver) $${OCI_REGISTRY}/$${OCI_IMAGE_REPO}:latest
+  - docker push $${OCI_REGISTRY}/$${OCI_IMAGE_REPO} --all-tags
+  environment:
+    OCI_REPO_TOKEN:
+      from_secret: DOCKER_TOKEN
+  when:
+    ref:
+    - refs/tags/**
+    event:
+    - promote
 
 - name: scan-image
-  pull: always
+  pull: Always
   image: 340268328991.dkr.ecr.eu-west-2.amazonaws.com/acp/trivy/client:latest
   resources:
     limits:
@@ -33,42 +101,51 @@ steps:
     event:
     - pull_request
     - push
-    - tag
 
-- name: image_to_quay
-  pull: if-not-exists
+- name: Push image tag to quay
+  pull: Always
   image: 340268328991.dkr.ecr.eu-west-2.amazonaws.com/acp/dind
+  resources:
+    limits:
+      cpu: 100
+      memory: 256Mi
   commands:
-  - docker login -u="ukhomeofficedigital+drone" -p=$${DOCKER_PASSWORD} quay.io
-  - docker tag rockylinux-base:$${DRONE_COMMIT_SHA} quay.io/ukhomeofficedigital/rockylinux-base:$${DRONE_COMMIT_SHA}
-  - docker tag rockylinux-base:$${DRONE_COMMIT_SHA} quay.io/ukhomeofficedigital/rockylinux-base:latest
-  - docker push quay.io/ukhomeofficedigital/rockylinux-base:$${DRONE_COMMIT_SHA}
-  - docker push quay.io/ukhomeofficedigital/rockylinux-base:latest
+  - docker login -u="$${OCI_REPO_USERNAME}" -p=$${OCI_REPO_TOKEN} $${OCI_REGISTRY}
+  - docker push $${OCI_REGISTRY}/$${OCI_IMAGE_REPO} --all-tags
   environment:
-    DOCKER_PASSWORD:
+    OCI_REPO_TOKEN:
       from_secret: docker_password
+  when:
+    branch:
+    - main
+    event:
+      include:
+      - push
+      exclude:
+      - promote
+
+- name: Push Semver and Tag Repo - force
+  pull: Always
+  image: 340268328991.dkr.ecr.eu-west-2.amazonaws.com/acp/acp-ci-tools
+  resources:
+    limits:
+      cpu: 100
+      memory: 256Mi
+  commands:
+  - git branch --set-upstream-to origin/${DRONE_COMMIT_BRANCH} 
+  - git push --force
+  - git tag -a $(cat .semver) -m "[CI SKIP] - new tag - $(cat .semver)"
+  - git push --force origin $(cat .semver)
   when:
     branch:
     - main
     event:
     - push
 
-- name: tagged_image_to_quay
-  pull: if-not-exists
-  image: 340268328991.dkr.ecr.eu-west-2.amazonaws.com/acp/dind
-  commands:
-  - docker login -u="ukhomeofficedigital+drone" -p=$${DOCKER_PASSWORD} quay.io
-  - docker tag rockylinux-base:$${DRONE_COMMIT_SHA} quay.io/ukhomeofficedigital/rockylinux-base:$${DRONE_TAG}
-  - docker tag rockylinux-base:$${DRONE_COMMIT_SHA} quay.io/ukhomeofficedigital/rockylinux-base:latest
-  - docker push quay.io/ukhomeofficedigital/rockylinux-base:$${DRONE_TAG}
-  - docker push quay.io/ukhomeofficedigital/rockylinux-base:latest
-  environment:
-    DOCKER_PASSWORD:
-      from_secret: docker_password
-  when:
-    event:
-    - tag
-
 services:
 - name: docker
-  image: 340268328991.dkr.ecr.eu-west-2.amazonaws.com/acp/dind:latest
+  image: 340268328991.dkr.ecr.eu-west-2.amazonaws.com/acp/dind
+  resources:
+    limits:
+      cpu: 1000
+      memory: 1024Mi
