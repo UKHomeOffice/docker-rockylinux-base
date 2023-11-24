@@ -8,6 +8,31 @@ platform:
   arch: amd64
 
 steps:
+- name: Increment Build Version
+  pull: always
+  image: 340268328991.dkr.ecr.eu-west-2.amazonaws.com/acp/acp-ci-tools
+  resources:
+    limits:
+      cpu: 100
+      memory: 256Mi
+  commands:
+  - git config --global --add safe.directory '*'
+  - ls -lrt
+  - git status
+  - echo "# current version - $(cat .semver)"
+  - awk -F. '/[0-9]+\./{$NF++;print}' OFS=. ORS= .semver | tee .semver-new >/dev/null
+  - rm -f .semver
+  - mv .semver-new .semver
+  - echo "# new build - $(cat .semver)"
+  - git commit -am"[CI SKIP] - Increment build version"
+  when:
+    event:
+      include:
+      - push
+      - pull_request
+      exclude:
+      - promote
+
 - name: build_docker_image
   pull: if-not-exists
   image: 340268328991.dkr.ecr.eu-west-2.amazonaws.com/acp/dind
@@ -68,6 +93,24 @@ steps:
   when:
     event:
     - tag
+
+- name: Push Semver and Tag Repo - force
+  pull: always
+  image: 340268328991.dkr.ecr.eu-west-2.amazonaws.com/acp/acp-ci-tools
+  resources:
+    limits:
+      cpu: 100
+      memory: 256Mi
+  commands:
+  - git branch --set-upstream-to origin/${DRONE_COMMIT_BRANCH} 
+  - git push --force
+  - git tag -a $(cat .semver) -m "[CI SKIP] - new tag - $(cat .semver)"
+  - git push --force origin $(cat .semver)
+  when:
+    branch:
+    - main
+    event:
+    - push
 
 services:
 - name: docker
