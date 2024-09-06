@@ -45,7 +45,7 @@ steps:
 
 - name: build
   pull: Always
-  image: 340268328991.dkr.ecr.eu-west-2.amazonaws.com/acp/dind
+  image: 340268328991.dkr.ecr.eu-west-2.amazonaws.com/acp/dind:v27.2-dind-rc1 
   resources:
     limits:
       cpu: 1000

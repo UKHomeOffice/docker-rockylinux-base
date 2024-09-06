@@ -1,4 +1,4 @@
-FROM rockylinux:9.2
+FROM rockylinux:9.3
 
 RUN dnf update -y  \
   && dnf autoremove -y \
