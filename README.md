@@ -18,7 +18,7 @@ docker run -it quay.io/ukhomeofficedigital/rockylinux-base bash
 
 ## Built With
 
-* Rocky Linux 9.2
+* Rocky Linux 9.3
 
 ## Find Us
 
